@@ -132,8 +132,10 @@ void loop() {
       Particle.publish("Result",resultStr, PRIVATE);
     break;
     case CHARGING_TEST:
-
-
+      if (batteryChargeTest()) {
+        waitUntil(meterParticlePublish);
+        Particle.publish("Result",resultStr, PRIVATE);
+      }
     break;
     case ERROR_STATE: 
       waitUntil(meterParticlePublish);
@@ -152,18 +154,8 @@ void loop() {
 
 
 
-  do {
-    if (millis() >= updateInterval + lastUpdate) {
-      stateOfCharge = int(batteryMonitor.getSoC());             // Percentage of full charge
-      snprintf(data, sizeof(data), "Battery charge level = %i", stateOfCharge);
-      Particle.publish("Test #5", data, PRIVATE);
-      Particle.process();
-      lastUpdate = millis();
-    }
-  }  while(stateOfCharge <= 65);
+
   Particle.publish("Test #6", "Battery charge test passed", PRIVATE);
-
-
   time_t beginTime = Time.now();
   watchdogISR();
   watchdogInterrupt = false;
@@ -183,14 +175,6 @@ void loop() {
   delay(1000);
   Particle.process();
 
-  Particle.publish("Test #8", "Final Test - Hard Reset in 1 second",PRIVATE);
-  delay(1000);
-  Particle.process();
-
-  digitalWrite(hardResetPin,HIGH);                    // Zero the count so only every three
-
-  Particle.publish("Test #8", "If you see this message - hard reset test failed", PRIVATE);
-  BlinkForever();
 }
 */
 
@@ -262,6 +246,23 @@ bool rtcAlarmTest() {                                 // This is a miss need to 
     rtc.clearInterrupt();
     return 1;
   }
+}
+
+bool batteryChargeTest() {
+    static unsigned long lastUpdate = 0;
+    int stateOfCharge = int(batteryMonitor.getSoC());
+    if (stateOfCharge <= 65 && millis() - lastUpdate >= 60000) {
+      snprintf(resultStr, sizeof(resultStr), "Battery charge level = %i", stateOfCharge);
+      waitUntil(meterParticlePublish);
+      Particle.publish("Update", resultStr, PRIVATE);
+      return 0;
+    }
+    else if (stateOfCharge <= 65) return 0;
+    else {
+      snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Passed");
+      rtc.clearInterrupt();
+      return 1;
+    }
 }
 
 
