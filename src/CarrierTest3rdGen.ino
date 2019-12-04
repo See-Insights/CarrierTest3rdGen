@@ -127,9 +127,13 @@ void loop() {
       Particle.publish("Result",resultStr, PRIVATE);
     break;
     case RTCALARM_TEST: 
-      rtcClockTest() ? state = RTCALARM_TEST : state = ERROR_STATE;
+      rtcAlarmTest() ? state = CHARGING_TEST : state = ERROR_STATE;
       waitUntil(meterParticlePublish);
       Particle.publish("Result",resultStr, PRIVATE);
+    break;
+    case CHARGING_TEST:
+
+
     break;
     case ERROR_STATE: 
       waitUntil(meterParticlePublish);
@@ -240,15 +244,22 @@ bool rtcAlarmTest() {                                 // This is a miss need to 
   waitUntil(meterParticlePublish);
   Particle.publish("Information", "Setting an alarm for 10 seconds", PRIVATE);
 
-  time_t RTCtime = rtc.getRTCTime();
-  rtc.setAlarm(RTCtime +10);
+  // Need to connect the MFP pin from the RTC to the Boron and set an interrupt here
+  // Will make this connection and add the code here.
 
-  if (!rtc.isRTCValid()) {
-    snprintf(resultStr, sizeof(resultStr),"RTC Clock Test Failed");
+  time_t RTCtime = rtc.getRTCTime();
+  rtc.setAlarm(RTCtime + 10);
+
+  delay(11000);
+  //waitFor(rtc.getInterrupt,15);
+
+  if (!rtc.getInterrupt()) {
+    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Failed");
     return 0;
   }
   else {
-    snprintf(resultStr, sizeof(resultStr),"RTC Clock Passes - Time is %s GMT",(const char*)Time.timeStr(rtc.getRTCTime()));
+    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Passed");
+    rtc.clearInterrupt();
     return 1;
   }
 }

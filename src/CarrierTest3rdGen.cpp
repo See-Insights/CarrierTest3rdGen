@@ -30,11 +30,10 @@ void loop();
 bool framTest();
 bool getTemperature();
 bool rtcClockTest();
+bool rtcAlarmTest();
 void watchdogISR();
 void BlinkForever();
 int hardResetNow(String command);
-bool isDSTusa();
-bool isDSTnz();
 bool meterParticlePublish(void);
 #line 22 "/Users/chipmc/Documents/Maker/Particle/Projects/CarrierTest3rdGen/src/CarrierTest3rdGen.ino"
 namespace FRAM {                                    // Moved to namespace instead of #define to limit scope
@@ -68,15 +67,15 @@ SerialLogHandler logHandler;                        // For RTC alerts and events
  State state = INITIALIZATION_STATE;
  
  // Pin Constants for Boron
- const int blueLED  = D7;                     // This LED is on the Electron itself
- const int userSwitch = D4;                 // User switch with a pull-up resistor
- const int tmp36Pin = A4;                    // Simple Analog temperature sensor
- const int donePin = A3;                    // Pin the Electron uses to "pet" the watchdog
- const int wakeUpPin = D8;                   // This is the Particle Electron WKP pin
- const int DeepSleepPin = D6;                // Power Cycles the Particle Device and the Carrier Board only RTC Alarm can wake
+ const int blueLED  = D7;                                         // This LED is on the Electron itself
+ const int userSwitch = D4;                                       // User switch with a pull-up resistor
+ const int tmp36Pin = A4;                                         // Simple Analog temperature sensor
+ const int donePin = A3;                                          // Pin the Electron uses to "pet" the watchdog
+ const int wakeUpPin = D8;                                        // This is the Particle Electron WKP pin
+ const int DeepSleepPin = D6;                                     // Power Cycles the Particle Device and the Carrier Board only RTC Alarm can wake
 
  // Program Variables
- volatile bool watchdogInterrupt = false;               // variable used to see if the watchdogInterrupt had fired
+ volatile bool watchdogInterrupt = false;                         // variable used to see if the watchdogInterrupt had fired
  char resultStr[64];
 
 
@@ -88,7 +87,7 @@ void setup() {
   pinMode(donePin,OUTPUT);                                        // Allows us to pet the watchdog
   digitalWrite(donePin,HIGH);
   digitalWrite(donePin,LOW);                                      // Pet the watchdog
-  pinMode(DeepSleepPin ,OUTPUT);                                   // For a hard reset active HIGH
+  pinMode(DeepSleepPin ,OUTPUT);                                  // For a hard reset active HIGH
 
   Particle.variable("Release",releaseNumber);
   //Particle.variable("stateOfChg", stateOfCharge);
@@ -103,7 +102,6 @@ void setup() {
   }
 
   rtc.setup();                                                     // Start the RTC code
-  rtc.setRTCTime(Time.now());
 
   attachInterrupt(wakeUpPin, watchdogISR, RISING);                 // Need to pet the watchdog when needed
 
@@ -131,12 +129,12 @@ void loop() {
       static bool firstPublish = false;
       if (!firstPublish) {
         waitUntil(meterParticlePublish);
-        Particle.publish("Switch Test","Please press user switch", PRIVATE);
+        Particle.publish("Prompt","Please press user switch", PRIVATE);
         firstPublish = true;
       }
       //if (digitalRead(userSwitch)) {
         waitUntil(meterParticlePublish);
-        Particle.publish("Switch Test","Passed - Press detected", PRIVATE);
+        Particle.publish("Result","Switch Test Passed - Press detected", PRIVATE);
         state = RTCTIME_TEST;
       //}
     } break;
@@ -144,6 +142,15 @@ void loop() {
       rtcClockTest() ? state = RTCALARM_TEST : state = ERROR_STATE;
       waitUntil(meterParticlePublish);
       Particle.publish("Result",resultStr, PRIVATE);
+    break;
+    case RTCALARM_TEST: 
+      rtcAlarmTest() ? state = CHARGING_TEST : state = ERROR_STATE;
+      waitUntil(meterParticlePublish);
+      Particle.publish("Result",resultStr, PRIVATE);
+    break;
+    case CHARGING_TEST:
+    
+
     break;
     case ERROR_STATE: 
       waitUntil(meterParticlePublish);
@@ -240,17 +247,42 @@ bool getTemperature() {
 }
 
 bool rtcClockTest() {
-  rtc.setRTCFromCloud();                                            // Set the clock
-  if (rtc.isRTCValid()) {
+  if (!rtc.isRTCValid()) {
     snprintf(resultStr, sizeof(resultStr),"RTC Clock Test Failed");
     return 0;
   }
   else {
-    snprintf(resultStr, sizeof(resultStr),"RTC Clock Passes - Time is %s",(const char*)Time.timeStr(rtc.getRTCTime()));
+    snprintf(resultStr, sizeof(resultStr),"RTC Clock Passes - Time is %s GMT",(const char*)Time.timeStr(rtc.getRTCTime()));
     return 1;
   }
 }
 
+bool rtcAlarmTest() {                                 // This is a miss need to connect to a pin
+  waitUntil(meterParticlePublish);
+  Particle.publish("Information", "Setting an alarm for 10 seconds", PRIVATE);
+
+  // Need to connect the MFP pin from the RTC to the Boron and set an interrupt here
+  // Will make this connection and add the code here.
+
+  time_t RTCtime = rtc.getRTCTime();
+  rtc.setAlarm(RTCtime +10);
+
+  delay(11000);
+  //waitFor(rtc.getInterrupt,15);
+
+  if (!rtc.getInterrupt()) {
+    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Failed");
+    return 0;
+  }
+  else {
+    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Passed");
+    rtc.clearInterrupt();
+    return 1;
+  }
+}
+
+
+// Utility Functions Area
 
 void watchdogISR()
 {
@@ -271,7 +303,6 @@ void BlinkForever() {
   }
 }
 
-
 int hardResetNow(String command)                                      // Will perform a hard reset on the Electron
 {
   if (command == "1")
@@ -280,76 +311,6 @@ int hardResetNow(String command)                                      // Will pe
     return 1;                                                         // Unfortunately, this will never be sent
   }
   else return 0;
-}
-
-bool isDSTusa() { 
-  // United States of America Summer Timer calculation (2am Local Time - 2nd Sunday in March/ 1st Sunday in November)
-  // Adapted from @ScruffR's code posted here https://community.particle.io/t/daylight-savings-problem/38424/4
-  // The code works in from months, days and hours in succession toward the two transitions
-  int dayOfMonth = Time.day();
-  int month = Time.month();
-  int dayOfWeek = Time.weekday() - 1; // make Sunday 0 .. Saturday 6
-
-  // By Month - inside or outside the DST window
-  if (month >= 4 && month <= 10)  
-  { // April to October definetly DST
-    return true;
-  }
-  else if (month < 3 || month > 11)
-  { // before March or after October is definetly standard time
-    return false;
-  }
-
-  boolean beforeFirstSunday = (dayOfMonth - dayOfWeek < 0);
-  boolean secondSundayOrAfter = (dayOfMonth - dayOfWeek > 7);
-
-  if (beforeFirstSunday && !secondSundayOrAfter) return (month == 11);
-  else if (!beforeFirstSunday && !secondSundayOrAfter) return false;
-  else if (!beforeFirstSunday && secondSundayOrAfter) return (month == 3);
-
-  int secSinceMidnightLocal = Time.now() % 86400;
-  boolean dayStartedAs = (month == 10); // DST in October, in March not
-  // on switching Sunday we need to consider the time
-  if (secSinceMidnightLocal >= 2*3600)
-  { //  In the US, Daylight Time is based on local time 
-    return !dayStartedAs;
-  }
-  return dayStartedAs;
-}
-
-bool isDSTnz() { 
-  // New Zealand Summer Timer calculation (2am Local Time - last Sunday in September/ 1st Sunday in April)
-  // Adapted from @ScruffR's code posted here https://community.particle.io/t/daylight-savings-problem/38424/4
-  // The code works in from months, days and hours in succession toward the two transitions
-  int dayOfMonth = Time.day();
-  int month = Time.month();
-  int dayOfWeek = Time.weekday() - 1; // make Sunday 0 .. Saturday 6
-
-  // By Month - inside or outside the DST window - 10 out of 12 months with April and Septemper in question
-  if (month >= 10 || month <= 3)  
-  { // October to March is definetly DST - 6 months
-    return true;
-  }
-  else if (month < 9 && month > 4)
-  { // before September and after April is definetly standard time - - 4 months
-    return false;
-  }
-
-  boolean beforeFirstSunday = (dayOfMonth - dayOfWeek < 6);
-  boolean lastSundayOrAfter = (dayOfMonth - dayOfWeek > 23);
-
-  if (beforeFirstSunday && !lastSundayOrAfter) return (month == 4);
-  else if (!beforeFirstSunday && !lastSundayOrAfter) return false;
-  else if (!beforeFirstSunday && lastSundayOrAfter) return (month == 9);
-
-  int secSinceMidnightLocal = Time.now() % 86400;
-  boolean dayStartedAs = (month == 10); // DST in October, in March not
-  // on switching Sunday we need to consider the time
-  if (secSinceMidnightLocal >= 2*3600)
-  { //  In the US, Daylight Time is based on local time 
-    return !dayStartedAs;
-  }
-  return dayStartedAs;
 }
 
 bool meterParticlePublish(void) {                                       // Enforces Particle's limit on 1 publish a second
