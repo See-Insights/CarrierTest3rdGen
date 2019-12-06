@@ -32,6 +32,7 @@ bool getTemperature();
 bool rtcClockTest();
 bool rtcAlarmTest();
 bool batteryChargeTest();
+bool watchdogTest();
 void watchdogISR();
 void BlinkForever();
 int hardResetNow(String command);
@@ -93,8 +94,6 @@ void setup() {
   Particle.variable("Release",releaseNumber);
   //Particle.variable("stateOfChg", stateOfCharge);
   //Particle.function("HardReset",hardResetNow);
-  //Particle.function("Set-Timezone",setTimeZone);
-  //Particle.function("Set-DSTOffset",setDSTOffset);
 
   if (!Particle.connected()) {                                     // Only going to connect if we are in connectionMode
     Particle.connect();
@@ -114,12 +113,23 @@ void setup() {
 void loop() {
   rtc.loop();                                                           // Need to run this in the main loop
   switch (state) {
-    case IDLE_STATE:
+    case IDLE_STATE: 
+      if (FRAMread8(FRAM::currentTestAddr) == 1) {
+        waitUntil(meterParticlePublish);
+        Particle.publish("Result","Deep Sleep Failed - Testing complete",PRIVATE);
+        FRAMwrite8(FRAM::currentTestAddr,0);
+      }
     break;
     case FRAM_TEST:
       framTest() ? state = TMP36_TEST : state=ERROR_STATE;
       waitUntil(meterParticlePublish);
       Particle.publish("Result",resultStr,PRIVATE);
+      if (FRAMread8(FRAM::currentTestAddr) == 1) {                        // The last test resets the device - we catch it here
+        waitUntil(meterParticlePublish);
+        Particle.publish("Result","Deep Sleep successful - Testing complete",PRIVATE);
+        FRAMwrite8(FRAM::currentTestAddr,0);
+        state = IDLE_STATE;
+      }
     break;
     case TMP36_TEST:
       getTemperature() ? state = USERSW_TEST : state = ERROR_STATE;
@@ -133,11 +143,11 @@ void loop() {
         Particle.publish("Prompt","Please press user switch", PRIVATE);
         firstPublish = true;
       }
-      //if (digitalRead(userSwitch)) {
+      if (digitalRead(userSwitch)) {
         waitUntil(meterParticlePublish);
         Particle.publish("Result","Switch Test Passed - Press detected", PRIVATE);
         state = RTCTIME_TEST;
-      //}
+      }
     } break;
     case RTCTIME_TEST:
       rtcClockTest() ? state = RTCALARM_TEST : state = ERROR_STATE;
@@ -153,7 +163,28 @@ void loop() {
       if (batteryChargeTest()) {
         waitUntil(meterParticlePublish);
         Particle.publish("Result",resultStr, PRIVATE);
+        state = WATCHDOG_TEST;
       }
+    break;
+    case WATCHDOG_TEST: {
+      static time_t beginTime = Time.now();
+      if (!watchdogTest())  state = ERROR_STATE;
+      else if (watchdogInterrupt) {
+        int elapsedMinutes = (Time.now() - beginTime)/60;
+        snprintf(resultStr, sizeof(resultStr), "Watchdog Test - Passed elampsed time %i mins", elapsedMinutes);
+        waitUntil(meterParticlePublish);
+        Particle.publish("Result",resultStr, PRIVATE);
+        state = DEEPSLEEP_TEST;
+      }
+    } break;
+    case DEEPSLEEP_TEST:
+      digitalWrite(DeepSleepPin,HIGH);
+      FRAMwrite8(FRAM::currentTestAddr,1);                            // Put a flag in FRAM since we will be resetting device
+      waitUntil(meterParticlePublish);            
+      Particle.publish("Information","Deep Sleep Test - 10 seconds",PRIVATE);
+      rtc.setAlarm(10);
+      delay(11000);
+      state = IDLE_STATE;                                             // If test is successful we will not get to this step
     break;
     case ERROR_STATE: 
       waitUntil(meterParticlePublish);
@@ -166,35 +197,6 @@ void loop() {
   }
 }
 
-
-/*
- 
-
-
-
-
-  Particle.publish("Test #6", "Battery charge test passed", PRIVATE);
-  time_t beginTime = Time.now();
-  watchdogISR();
-  watchdogInterrupt = false;
-
-  if (Particle.connected()) Particle.publish("Test #7 Started","Expect this test to take ~60 minutes",PRIVATE);
-  delay(1000);
-  Particle.process();
-
-  while(!watchdogInterrupt) {
-    Particle.process();
-    delay(1000);
-  }
-
-  int elapsedMinutes = (Time.now() - beginTime)/60;
-  snprintf(data, sizeof(data), "Elapsed time in minutes is %i", elapsedMinutes);
-  if (Particle.connected()) Particle.publish("Test #7 Finished", data ,PRIVATE);
-  delay(1000);
-  Particle.process();
-
-}
-*/
 
 bool framTest() {
   if (!fram.begin()) {                                                // You can stick the new i2c addr in here, e.g. begin(0x51);
@@ -249,8 +251,8 @@ bool rtcAlarmTest() {                                 // This is a miss need to 
   // Need to connect the MFP pin from the RTC to the Boron and set an interrupt here
   // Will make this connection and add the code here.
 
-  time_t RTCtime = rtc.getRTCTime();
-  rtc.setAlarm(RTCtime + 10);
+
+  rtc.setAlarm(10);
 
   delay(11000);
   //waitFor(rtc.getInterrupt,15);
@@ -267,20 +269,37 @@ bool rtcAlarmTest() {                                 // This is a miss need to 
 }
 
 bool batteryChargeTest() {
-    static unsigned long lastUpdate = 0;
-    int stateOfCharge = int(batteryMonitor.getSoC());
-    if (stateOfCharge <= 65 && millis() - lastUpdate >= 60000) {
-      snprintf(resultStr, sizeof(resultStr), "Battery charge level = %i", stateOfCharge);
-      waitUntil(meterParticlePublish);
-      Particle.publish("Update", resultStr, PRIVATE);
-      return 0;
-    }
-    else if (stateOfCharge <= 65) return 0;
-    else {
-      snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Passed");
-      rtc.clearInterrupt();
-      return 1;
-    }
+  static unsigned long lastUpdate = 0;
+  int stateOfCharge = int(batteryMonitor.getSoC());
+  if (stateOfCharge <= 65 && millis() - lastUpdate >= 60000) {
+    snprintf(resultStr, sizeof(resultStr), "Battery charge level = %i", stateOfCharge);
+    waitUntil(meterParticlePublish);
+    Particle.publish("Update", resultStr, PRIVATE);
+    return 0;
+  }
+  else if (stateOfCharge <= 65) return 0;
+  else {
+    snprintf(resultStr, sizeof(resultStr),"Battery Charge Test - Passed");
+    return 1;
+  }
+}
+
+bool watchdogTest() {
+  static bool initialMessage = false;
+  static time_t beginTime = Time.now();
+  if (!initialMessage) {
+    waitUntil(meterParticlePublish);
+    Particle.publish("Information","Watchdog timer test, expect this to take about an hour", PRIVATE);
+    watchdogISR();
+    watchdogInterrupt = false;
+    initialMessage = true;
+  }
+
+  if(Time.now() - beginTime > 4200 ) {
+    snprintf(resultStr, sizeof(resultStr),"Watchdog Test Failed > 70 mins");
+    return 0;
+  }
+  else return 1;
 }
 
 
