@@ -5,25 +5,25 @@
 #include "application.h"
 #line 1 "/Users/chipmc/Documents/Maker/Particle/Projects/CarrierTest3rdGen/src/CarrierTest3rdGen.ino"
 /*
- * Project CarrierTest
- * Description: Tests the 3rd Generation Device Carrier Boron / Xenon / Argon Carrier
- * Author: Charles McClelland
- * Date: Started 11-17-2019 
- * 
- * Implements the following Tests
- * 1 - Test i2c bus and FRAM functionality
- * 2 - Test the TMP-36 for temperature
- * 3 - Test the User Switch - Requires physical Press
- * 4 - Test that the RTC is keeping time
- * 5 - Test an alarm on the RTC
- * 6 - Test Battery charging - Can take a while based on state of charge
- * 7 - Test Watchdog timer interval - Takes an hour
- * 8 - Test Deep Sleep functionality
- * 
- * v0.10 - Initial release under version control
- * v0.20 - Added the MCP79410 Library
- * v0.30 - Redid the program structure
- */
+* Project CarrierTest
+* Description: Tests the 3rd Generation Device Carrier Boron / Xenon / Argon Carrier
+* Author: Charles McClelland
+* Date: Started 11-17-2019 
+* 
+* Implements the following Tests
+* 1 - Test i2c bus and FRAM functionality
+* 2 - Test the TMP-36 for temperature
+* 3 - Test the User Switch - Requires physical Press
+* 4 - Test that the RTC is keeping time
+* 5 - Test an alarm on the RTC
+* 6 - Test Battery charging - Can take a while based on state of charge
+* 7 - Test Watchdog timer interval - Takes an hour
+* 8 - Test Deep Sleep functionality
+* 
+* v0.10 - Initial release under version control
+* v0.20 - Added the MCP79410 Library
+* v0.30 - Redid the program structure
+*/
 
 void setup();
 void loop();
@@ -39,47 +39,48 @@ int hardResetNow(String command);
 bool meterParticlePublish(void);
 #line 22 "/Users/chipmc/Documents/Maker/Particle/Projects/CarrierTest3rdGen/src/CarrierTest3rdGen.ino"
 namespace FRAM {                                    // Moved to namespace instead of #define to limit scope
-  enum Addresses {
-    versionAddr           = 0x00,                   // Where we store the memory map version number
-    controlRegisterAddr   = 0x01,
-    currentTestAddr       = 0x02,                   // What test are we on?  Some perform reset
-    timeZoneAddr          = 0x03,                   // Store the local time zone data
-    tomeZoneOffsetAddr    = 0x04,                   // Store the DST offset value 0 - 2
-    deepSleepStartAddr    = 0x05,                   // Time we started the deep sleep test
-  };
+enum Addresses {
+  versionAddr           = 0x00,                   // Where we store the memory map version number
+  controlRegisterAddr   = 0x01,
+  currentTestAddr       = 0x02,                   // What test are we on?  Some perform reset
+  timeZoneAddr          = 0x03,                   // Store the local time zone data
+  tomeZoneOffsetAddr    = 0x04,                   // Store the DST offset value 0 - 2
+  deepSleepStartAddr    = 0x05,                   // Time we started the deep sleep test
+  testdataAddr          = 0x09,
+};
 };
 
 const char releaseNumber[6] = "0.3";                // Displays the release on the menu ****  this is not a production release ****
 const int FRAMversionNumber = 1;
 
- // Included Libraries
- #include "Adafruit_FRAM_I2C.h"                     // Library for FRAM functions
- #include "FRAM-Library-Extensions.h"               // Extends the FRAM Library
- #include "3rdGenDevicePinoutdoc.h"                 // Documents pinout
- #include "MCP79410RK.h"
+// Included Libraries
+#include "3rdGenDevicePinoutdoc.h"                 // Documents pinout
+#include "MCP79410RK.h"
+#include "MB85RC256V-FRAM-RK.h"
 
 SerialLogHandler logHandler;                        // For RTC alerts and events
 
- // Prototypes and System Mode calls
- SYSTEM_THREAD(ENABLED);         // Means my code will not be held up by Particle processes.
- FuelGauge batteryMonitor;       // Prototype for the fuel gauge (included in Particle core library)
- MCP79410 rtc;                   // Rickkas MCP79410 libarary
+// Prototypes and System Mode calls
+SYSTEM_THREAD(ENABLED);         // Means my code will not be held up by Particle processes.
+FuelGauge batteryMonitor;       // Prototype for the fuel gauge (included in Particle core library)
+MCP79410 rtc;                   // Rickkas MCP79410 libarary
+MB85RC64 fram(Wire, 0);
 
- enum State {INITIALIZATION_STATE, FRAM_TEST, TMP36_TEST, USERSW_TEST, RTCTIME_TEST, RTCALARM_TEST, CHARGING_TEST, WATCHDOG_TEST, DEEPSLEEP_TEST, ERROR_STATE, IDLE_STATE};
- State state = INITIALIZATION_STATE;
- 
- // Pin Constants for Boron
- const int blueLED  = D7;                                         // This LED is on the Electron itself
- const int userSwitch = D4;                                       // User switch with a pull-up resistor
- const int tmp36Pin = A4;                                         // Simple Analog temperature sensor
- const int donePin = A3;                                          // Pin the Electron uses to "pet" the watchdog
- const int wakeUpPin = D8;                                        // This is the Particle Electron WKP pin
- const int DeepSleepPin = D6;                                     // Power Cycles the Particle Device and the Carrier Board only RTC Alarm can wake
+enum State {INITIALIZATION_STATE, FRAM_TEST, TMP36_TEST, USERSW_TEST, RTCTIME_TEST, RTCALARM_TEST, CHARGING_TEST, WATCHDOG_TEST, DEEPSLEEP_TEST, ERROR_STATE, IDLE_STATE};
+State state = INITIALIZATION_STATE;
 
- // Program Variables
- volatile bool watchdogInterrupt = false;                         // variable used to see if the watchdogInterrupt had fired
- char resultStr[64];
+// Pin Constants for Boron
+const int blueLED  = D7;                                         // This LED is on the Electron itself
+const int userSwitch = D4;                                       // User switch with a pull-up resistor
+const int tmp36Pin = A4;                                         // Simple Analog temperature sensor
+const int donePin = A3;                                          // Pin the Electron uses to "pet" the watchdog
+const int wakeUpPin = D8;                                        // This is the Particle Electron WKP pin
+const int DeepSleepPin = D6;                                     // Power Cycles the Particle Device and the Carrier Board only RTC Alarm can wake
 
+// Program Variables
+byte currentState;                                               // Store the current state for the tests that might cause a reset
+volatile bool watchdogInterrupt = false;                         // variable used to see if the watchdogInterrupt had fired
+char resultStr[64];
 
 // setup() runs once, when the device is first turned on.
 void setup() {
@@ -92,8 +93,6 @@ void setup() {
   pinMode(DeepSleepPin ,OUTPUT);                                  // For a hard reset active HIGH
 
   Particle.variable("Release",releaseNumber);
-  //Particle.variable("stateOfChg", stateOfCharge);
-  //Particle.function("HardReset",hardResetNow);
 
   if (!Particle.connected()) {                                     // Only going to connect if we are in connectionMode
     Particle.connect();
@@ -102,6 +101,8 @@ void setup() {
   }
 
   rtc.setup();                                                     // Start the RTC code
+  fram.begin();                                                    // Initializes Wire but does not return a boolean on successful initialization
+  fram.get(FRAM::currentTestAddr,currentState);
 
   attachInterrupt(wakeUpPin, watchdogISR, RISING);                 // Need to pet the watchdog when needed
 
@@ -113,21 +114,21 @@ void setup() {
 void loop() {
   rtc.loop();                                                           // Need to run this in the main loop
   switch (state) {
-    case IDLE_STATE: 
-      if (FRAMread8(FRAM::currentTestAddr) == 1) {
+    case IDLE_STATE: {
+      if (currentState == 1) {
         waitUntil(meterParticlePublish);
         Particle.publish("Result","Deep Sleep Failed - Testing complete",PRIVATE);
-        FRAMwrite8(FRAM::currentTestAddr,0);
+        fram.put(FRAM::currentTestAddr,0);
       }
-    break;
+    } break;
     case FRAM_TEST:
       framTest() ? state = TMP36_TEST : state=ERROR_STATE;
       waitUntil(meterParticlePublish);
       Particle.publish("Result",resultStr,PRIVATE);
-      if (FRAMread8(FRAM::currentTestAddr) == 1) {                        // The last test resets the device - we catch it here
+      if (currentState == 1) {                        // The last test resets the device - we catch it here
         waitUntil(meterParticlePublish);
         Particle.publish("Result","Deep Sleep successful - Testing complete",PRIVATE);
-        FRAMwrite8(FRAM::currentTestAddr,0);
+        fram.put(FRAM::currentTestAddr,0);
         state = IDLE_STATE;
       }
     break;
@@ -143,7 +144,8 @@ void loop() {
         Particle.publish("Prompt","Please press user switch", PRIVATE);
         firstPublish = true;
       }
-      if (digitalRead(userSwitch)) {
+    
+      if (digitalRead(userSwitch) == LOW) {
         waitUntil(meterParticlePublish);
         Particle.publish("Result","Switch Test Passed - Press detected", PRIVATE);
         state = RTCTIME_TEST;
@@ -179,7 +181,7 @@ void loop() {
     } break;
     case DEEPSLEEP_TEST:
       digitalWrite(DeepSleepPin,HIGH);
-      FRAMwrite8(FRAM::currentTestAddr,1);                            // Put a flag in FRAM since we will be resetting device
+      fram.put(FRAM::currentTestAddr,1);                            // Put a flag in FRAM since we will be resetting device
       waitUntil(meterParticlePublish);            
       Particle.publish("Information","Deep Sleep Test - 10 seconds",PRIVATE);
       rtc.setAlarm(10);
@@ -199,15 +201,19 @@ void loop() {
 
 
 bool framTest() {
-  if (!fram.begin()) {                                                // You can stick the new i2c addr in here, e.g. begin(0x51);
-    snprintf(resultStr, sizeof(resultStr),"FRAM Test Failed - Missing FRAM");
-    return 0;
-  }
-  else if (FRAMread8(FRAM::versionAddr) != FRAMversionNumber) {                 // Check to see if the memory map in the sketch matches the data on the chip
-    ResetFRAM();                                                      // Reset the FRAM to correct the issue
+  int tempVersion;
+  fram.get(FRAM::versionAddr, tempVersion);
+  if (tempVersion != FRAMversionNumber) {                 // Check to see if the memory map in the sketch matches the data on the chip
+    fram.erase();                                                          // Reset the FRAM to correct the issue
+    fram.put(FRAM::versionAddr,FRAMversionNumber);                         // Put the right value in
   }
 
-  if (FRAMread8(FRAM::versionAddr) != FRAMversionNumber) {
+  int randomNumberWrote = random(10, 1000);
+  int randomNumberRead;
+  fram.put(FRAM::testdataAddr,randomNumberWrote);
+  fram.get(FRAM::testdataAddr,randomNumberRead);
+
+  if (randomNumberRead != randomNumberWrote) {
     snprintf(resultStr, sizeof(resultStr),"FRAM Test Failed - FRAM Read Error");
     return 0;
   } 
@@ -269,8 +275,17 @@ bool rtcAlarmTest() {                                 // This is a miss need to 
 }
 
 bool batteryChargeTest() {
+  static bool initialMessage = false;
   static unsigned long lastUpdate = 0;
   int stateOfCharge = int(batteryMonitor.getSoC());
+
+  if (!initialMessage) {
+    snprintf(resultStr, sizeof(resultStr), "Battery charge level = %i", stateOfCharge);
+    waitUntil(meterParticlePublish);
+    Particle.publish("Update", resultStr, PRIVATE);
+    initialMessage = true;
+  }
+
   if (stateOfCharge <= 65 && millis() - lastUpdate >= 60000) {
     snprintf(resultStr, sizeof(resultStr), "Battery charge level = %i", stateOfCharge);
     waitUntil(meterParticlePublish);

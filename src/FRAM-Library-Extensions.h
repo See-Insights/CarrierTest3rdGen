@@ -76,14 +76,19 @@ void ResetFRAM()  // This will reset the FRAM - set the version and preserve del
 {
     // Note - have to hard code the size here due to this issue - http://www.microchip.com/forums/m501193.aspx
     byte tempControlReg = FRAMread8(FRAM::controlRegisterAddr);
-    if (Particle.connected()) Particle.publish("FRAM","Resetting in progress", PRIVATE);
+    char resultStr[64];
+    if (Particle.connected()) Particle.publish("Event","FRAM reset in progress", PRIVATE);
     for (unsigned long i=8; i < 32768; i++) {  // Start at 4 to not overwrite debounce and sensitivity
         FRAMwrite8(i,0x0);
         if (i==8192) if (Particle.connected()) Particle.publish("Event", "Fram Reset 1/4 done", PRIVATE);
         if (i==16384) if (Particle.connected()) Particle.publish("Event", "Fram Reset 1/2 done", PRIVATE);
-        if (i==(24576)) if (Particle.connected()) Particle.publish("Event", "Fram Reset 3/4 done", PRIVATE);
+        if (i==24576) if (Particle.connected()) Particle.publish("Event", "Fram Reset 3/4 done", PRIVATE);
         if (i==32767) if (Particle.connected()) Particle.publish("Event", "Fram Reset done", PRIVATE);
     }
-    FRAMwrite8(FRAM::controlRegisterAddr,tempControlReg);                   // Preserce the control register values
+    FRAMwrite8(FRAM::controlRegisterAddr,tempControlReg);                   // Preserve the control register values
     FRAMwrite8(FRAM::versionAddr,FRAMversionNumber);                        // Reset version to match #define value for sketch
+    int tempFRAMresult = FRAMread8(FRAM::versionAddr);
+    waitUntil(meterParticlePublish);
+    snprintf(resultStr, sizeof(resultStr), "FRAM version number %i and result from FRAM is %i", FRAMversionNumber, tempFRAMresult);
+    Particle.publish("Test", resultStr, PRIVATE);
 }
