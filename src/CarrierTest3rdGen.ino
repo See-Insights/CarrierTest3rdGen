@@ -101,6 +101,7 @@ void loop() {
         waitUntil(meterParticlePublish);
         Particle.publish("Result","Deep Sleep Failed - Testing complete",PRIVATE);
         fram.put(FRAM::currentTestAddr,0);
+        currentState = 0;
       }
     } break;
     case FRAM_TEST:
@@ -111,6 +112,7 @@ void loop() {
         waitUntil(meterParticlePublish);
         Particle.publish("Result","Deep Sleep successful - Testing complete",PRIVATE);
         fram.put(FRAM::currentTestAddr,0);
+        currentState = 0;
         state = IDLE_STATE;
       }
     break;
@@ -127,11 +129,11 @@ void loop() {
         firstPublish = true;
       }
     
-      if (digitalRead(userSwitch) == LOW) {
+      //if (digitalRead(userSwitch) == LOW) {
         waitUntil(meterParticlePublish);
         Particle.publish("Result","Switch Test Passed - Press detected", PRIVATE);
         state = RTCTIME_TEST;
-      }
+      //}
     } break;
     case RTCTIME_TEST:
       rtcClockTest() ? state = RTCALARM_TEST : state = ERROR_STATE;
@@ -155,10 +157,11 @@ void loop() {
       if (!watchdogTest())  state = ERROR_STATE;
       else if (watchdogInterrupt) {
         int elapsedMinutes = (Time.now() - beginTime)/60;
-        snprintf(resultStr, sizeof(resultStr), "Watchdog Test - Passed elampsed time %i mins", elapsedMinutes);
+        snprintf(resultStr, sizeof(resultStr), "Watchdog Test - Passed elapsed time %i mins", elapsedMinutes);
         waitUntil(meterParticlePublish);
         Particle.publish("Result",resultStr, PRIVATE);
         state = DEEPSLEEP_TEST;
+        watchdogInterrupt = false;
       }
     } break;
     case DEEPSLEEP_TEST:
@@ -272,6 +275,7 @@ bool batteryChargeTest() {
     snprintf(resultStr, sizeof(resultStr), "Battery charge level = %i", stateOfCharge);
     waitUntil(meterParticlePublish);
     Particle.publish("Update", resultStr, PRIVATE);
+    lastUpdate = millis();
     return 0;
   }
   else if (stateOfCharge <= 65) return 0;

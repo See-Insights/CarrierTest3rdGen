@@ -23,6 +23,7 @@
 * v0.10 - Initial release under version control
 * v0.20 - Added the MCP79410 Library
 * v0.30 - Redid the program structure
+* v0.40 - Moved to the new library for FRAM
 */
 
 void setup();
@@ -37,20 +38,20 @@ void watchdogISR();
 void BlinkForever();
 int hardResetNow(String command);
 bool meterParticlePublish(void);
-#line 22 "/Users/chipmc/Documents/Maker/Particle/Projects/CarrierTest3rdGen/src/CarrierTest3rdGen.ino"
+#line 23 "/Users/chipmc/Documents/Maker/Particle/Projects/CarrierTest3rdGen/src/CarrierTest3rdGen.ino"
 namespace FRAM {                                    // Moved to namespace instead of #define to limit scope
-enum Addresses {
-  versionAddr           = 0x00,                   // Where we store the memory map version number
-  controlRegisterAddr   = 0x01,
-  currentTestAddr       = 0x02,                   // What test are we on?  Some perform reset
-  timeZoneAddr          = 0x03,                   // Store the local time zone data
-  tomeZoneOffsetAddr    = 0x04,                   // Store the DST offset value 0 - 2
-  deepSleepStartAddr    = 0x05,                   // Time we started the deep sleep test
-  testdataAddr          = 0x09,
-};
+  enum Addresses {
+    versionAddr           = 0x00,                   // Where we store the memory map version number
+    controlRegisterAddr   = 0x01,
+    currentTestAddr       = 0x02,                   // What test are we on?  Some perform reset
+    timeZoneAddr          = 0x03,                   // Store the local time zone data
+    tomeZoneOffsetAddr    = 0x04,                   // Store the DST offset value 0 - 2
+    deepSleepStartAddr    = 0x05,                   // Time we started the deep sleep test
+    testdataAddr          = 0x09,
+  };
 };
 
-const char releaseNumber[6] = "0.3";                // Displays the release on the menu ****  this is not a production release ****
+const char releaseNumber[6] = "0.4";                // Displays the release on the menu ****  this is not a production release ****
 const int FRAMversionNumber = 1;
 
 // Included Libraries
@@ -119,6 +120,7 @@ void loop() {
         waitUntil(meterParticlePublish);
         Particle.publish("Result","Deep Sleep Failed - Testing complete",PRIVATE);
         fram.put(FRAM::currentTestAddr,0);
+        currentState = 0;
       }
     } break;
     case FRAM_TEST:
@@ -129,6 +131,7 @@ void loop() {
         waitUntil(meterParticlePublish);
         Particle.publish("Result","Deep Sleep successful - Testing complete",PRIVATE);
         fram.put(FRAM::currentTestAddr,0);
+        currentState = 0;
         state = IDLE_STATE;
       }
     break;
@@ -145,11 +148,11 @@ void loop() {
         firstPublish = true;
       }
     
-      if (digitalRead(userSwitch) == LOW) {
+      //if (digitalRead(userSwitch) == LOW) {
         waitUntil(meterParticlePublish);
         Particle.publish("Result","Switch Test Passed - Press detected", PRIVATE);
         state = RTCTIME_TEST;
-      }
+      //}
     } break;
     case RTCTIME_TEST:
       rtcClockTest() ? state = RTCALARM_TEST : state = ERROR_STATE;
@@ -173,10 +176,11 @@ void loop() {
       if (!watchdogTest())  state = ERROR_STATE;
       else if (watchdogInterrupt) {
         int elapsedMinutes = (Time.now() - beginTime)/60;
-        snprintf(resultStr, sizeof(resultStr), "Watchdog Test - Passed elampsed time %i mins", elapsedMinutes);
+        snprintf(resultStr, sizeof(resultStr), "Watchdog Test - Passed elapsed time %i mins", elapsedMinutes);
         waitUntil(meterParticlePublish);
         Particle.publish("Result",resultStr, PRIVATE);
         state = DEEPSLEEP_TEST;
+        watchdogInterrupt = false;
       }
     } break;
     case DEEPSLEEP_TEST:
@@ -290,6 +294,7 @@ bool batteryChargeTest() {
     snprintf(resultStr, sizeof(resultStr), "Battery charge level = %i", stateOfCharge);
     waitUntil(meterParticlePublish);
     Particle.publish("Update", resultStr, PRIVATE);
+    lastUpdate = millis();
     return 0;
   }
   else if (stateOfCharge <= 65) return 0;
