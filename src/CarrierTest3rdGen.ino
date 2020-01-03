@@ -18,6 +18,8 @@
 * v0.20 - Added the MCP79410 Library
 * v0.30 - Redid the program structure
 * v0.40 - Moved to the new library for FRAM
+* v0.50 - Changed pin definitions for the new v1.2 Boron Carrier
+* v0.60 - Added i2c scan and improved the RTC alarm testing
 */
 
 namespace FRAM {                                    // Moved to namespace instead of #define to limit scope
@@ -48,14 +50,14 @@ FuelGauge batteryMonitor;       // Prototype for the fuel gauge (included in Par
 MCP79410 rtc;                   // Rickkas MCP79410 libarary
 MB85RC64 fram(Wire, 0);
 
-enum State {INITIALIZATION_STATE, FRAM_TEST, TMP36_TEST, USERSW_TEST, RTCTIME_TEST, RTCALARM_TEST, CHARGING_TEST, WATCHDOG_TEST, DEEPSLEEP_TEST, ERROR_STATE, IDLE_STATE};
+enum State {INITIALIZATION_STATE, I2C_SCAN, FRAM_TEST, TMP36_TEST, USERSW_TEST, RTCTIME_TEST, RTCALARM_TEST, CHARGING_TEST, WATCHDOG_TEST, DEEPSLEEP_TEST, ERROR_STATE, IDLE_STATE};
 State state = INITIALIZATION_STATE;
 
 // Pin Constants for Boron
 const int blueLED  = D7;                                         // This LED is on the Electron itself
 const int userSwitch = D4;                                       // User switch with a pull-up resistor
 const int tmp36Pin = A4;                                         // Simple Analog temperature sensor
-const int donePin = A3;                                          // Pin the Electron uses to "pet" the watchdog
+const int donePin = D5;                                          // Pin the Electron uses to "pet" the watchdog
 const int wakeUpPin = D8;                                        // This is the Particle Electron WKP pin
 const int DeepSleepPin = D6;                                     // Power Cycles the Particle Device and the Carrier Board only RTC Alarm can wake
 
@@ -76,6 +78,13 @@ void setup() {
 
   Particle.variable("Release",releaseNumber);
 
+  detachInterrupt(LOW_BAT_UC);
+  // Delay for up to two system power manager loop invocations
+  delay(2000);
+  // Change PMIC settings
+  PMIC pmic;
+  pmic.setInputVoltageLimit(4640);
+
   if (!Particle.connected()) {                                     // Only going to connect if we are in connectionMode
     Particle.connect();
     waitFor(Particle.connected,90000);                             // 60 seconds then we timeout  -- *** need to add disconnected option and test
@@ -88,7 +97,7 @@ void setup() {
 
   attachInterrupt(wakeUpPin, watchdogISR, RISING);                 // Need to pet the watchdog when needed
 
-  state = FRAM_TEST;                                               // Start the tests
+  state = I2C_SCAN;                                                // Start the tests
   Particle.publish("Test Start", "Beginning Test Run",PRIVATE);
 }
 
@@ -104,6 +113,11 @@ void loop() {
         currentState = 0;
       }
     } break;
+    case I2C_SCAN:
+      i2cScan() ? state = FRAM_TEST : state = ERROR_STATE;
+      waitUntil(meterParticlePublish);
+      Particle.publish("Result",resultStr, PRIVATE);
+    break;
     case FRAM_TEST:
       framTest() ? state = TMP36_TEST : state=ERROR_STATE;
       waitUntil(meterParticlePublish);
@@ -128,12 +142,11 @@ void loop() {
         Particle.publish("Prompt","Please press user switch", PRIVATE);
         firstPublish = true;
       }
-    
-      //if (digitalRead(userSwitch) == LOW) {
+      if (digitalRead(userSwitch) == LOW) {
         waitUntil(meterParticlePublish);
         Particle.publish("Result","Switch Test Passed - Press detected", PRIVATE);
         state = RTCTIME_TEST;
-      //}
+      }
     } break;
     case RTCTIME_TEST:
       rtcClockTest() ? state = RTCALARM_TEST : state = ERROR_STATE;
@@ -182,6 +195,43 @@ void loop() {
       state = IDLE_STATE;
     break;
   }
+}
+
+bool i2cScan() {                                            // Scan the i2c bus and publish the list of devices found
+	byte error, address;
+	int nDevices = 0;
+  strncpy(resultStr,"i2c device(s) found at: ",sizeof(resultStr));
+
+	for(address = 1; address < 127; address++ )
+	{
+		// The i2c_scanner uses the return value of
+		// the Write.endTransmisstion to see if
+		// a device did acknowledge to the address.
+		Wire.beginTransmission(address);
+		error = Wire.endTransmission();
+
+		if (error == 0)
+		{
+      char tempString[4];
+      snprintf(tempString, sizeof(tempString), "%02X ",address);
+      strncat(resultStr,tempString,4);
+			nDevices++;
+      if (nDevices == 9) break;                    // All we have space to report in resultStr
+		}
+
+		else if (error==4) {
+      snprintf(resultStr,sizeof(resultStr),"Unknown error at address %02X", address);
+      return 0;
+		}
+
+	}
+
+	if (nDevices == 0) {
+    snprintf(resultStr,sizeof(resultStr),"No I2C devices found");
+    return 0;
+  }
+
+  return 1;
 }
 
 
@@ -235,27 +285,24 @@ bool rtcClockTest() {
   }
 }
 
-bool rtcAlarmTest() {                                 // This is a miss need to connect to a pin
+bool rtcAlarmTest() {                                                                 // RTC Alarm and Watchdog share access to Wake Pin via an OR gate
   waitUntil(meterParticlePublish);
   Particle.publish("Information", "Setting an alarm for 10 seconds", PRIVATE);
-
-  // Need to connect the MFP pin from the RTC to the Boron and set an interrupt here
-  // Will make this connection and add the code here.
-
 
   rtc.setAlarm(10);
 
   delay(11000);
-  //waitFor(rtc.getInterrupt,15);
 
-  if (!rtc.getInterrupt()) {
-    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Failed");
-    return 0;
+  if (rtc.getInterrupt() && digitalRead(wakeUpPin)) {                                 // We need both a HIGH on Wake and the RTC Interrupt to pass this test
+    bool beforeClear = digitalRead(wakeUpPin);
+    rtc.clearInterrupt();
+    bool afterClear = digitalRead(wakeUpPin);
+    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Passed and Wake Pin went from %s to %s",beforeClear?"HIGH":"LOW", afterClear?"HIGH":"LOW");
+    return 1;
   }
   else {
-    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Passed");
-    rtc.clearInterrupt();
-    return 1;
+    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Failed");
+    return 0;
   }
 }
 
