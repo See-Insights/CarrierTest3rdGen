@@ -20,6 +20,7 @@
 * v0.40 - Moved to the new library for FRAM
 * v0.50 - Changed pin definitions for the new v1.2 Boron Carrier
 * v0.60 - Added i2c scan and improved the RTC alarm testing
+* v0.65 - Added signal strength messaging at connection.  This is Boron Specific / need to fix this for Xenon / Argon
 */
 
 namespace FRAM {                                    // Moved to namespace instead of #define to limit scope
@@ -91,6 +92,14 @@ void setup() {
     Particle.process();
   }
 
+  getSignalStrength();
+  Particle.publish("Status",resultStr,PRIVATE);
+
+
+  waitUntil(meterParticlePublish);
+  Particle.publish("Status", "Beginning Test Run",PRIVATE);
+
+
   rtc.setup();                                                     // Start the RTC code
   fram.begin();                                                    // Initializes Wire but does not return a boolean on successful initialization
   fram.get(FRAM::currentTestAddr,currentState);
@@ -98,7 +107,7 @@ void setup() {
   attachInterrupt(wakeUpPin, watchdogISR, RISING);                 // Need to pet the watchdog when needed
 
   state = I2C_SCAN;                                                // Start the tests
-  Particle.publish("Test Start", "Beginning Test Run",PRIVATE);
+
 }
 
 
@@ -389,4 +398,22 @@ bool meterParticlePublish(void) {                                       // Enfor
     return 1;
   }
   else return 0;
+}
+
+void getSignalStrength()
+{
+  const char* radioTech[10] = {"Unknown","None","WiFi","GSM","UMTS","CDMA","LTE","IEEE802154","LTE_CAT_M1","LTE_CAT_NB1"};
+
+  // New Signal Strength capability - https://community.particle.io/t/boron-lte-and-cellular-rssi-funny-values/45299/8
+  CellularSignal sig = Cellular.RSSI();
+
+  auto rat = sig.getAccessTechnology();
+ 
+  //float strengthVal = sig.getStrengthValue();
+  float strengthPercentage = sig.getStrength();
+
+  //float qualityVal = sig.getQualityValue();
+  float qualityPercentage = sig.getQuality();
+
+  snprintf(resultStr,sizeof(resultStr), "Connected: %s S:%2.0f%%, Q:%2.0f%% ", radioTech[rat], strengthPercentage, qualityPercentage);
 }

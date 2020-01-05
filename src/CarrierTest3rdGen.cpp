@@ -25,6 +25,7 @@
 * v0.30 - Redid the program structure
 * v0.40 - Moved to the new library for FRAM
 * v0.50 - Changed pin definitions for the new v1.2 Boron Carrier
+* v0.60 - Added i2c scan and improved the RTC alarm testing
 */
 
 void setup();
@@ -40,7 +41,8 @@ void watchdogISR();
 void BlinkForever();
 int hardResetNow(String command);
 bool meterParticlePublish(void);
-#line 24 "/Users/chipmc/Documents/Maker/Particle/Projects/CarrierTest3rdGen/src/CarrierTest3rdGen.ino"
+void getSignalStrength();
+#line 25 "/Users/chipmc/Documents/Maker/Particle/Projects/CarrierTest3rdGen/src/CarrierTest3rdGen.ino"
 namespace FRAM {                                    // Moved to namespace instead of #define to limit scope
   enum Addresses {
     versionAddr           = 0x00,                   // Where we store the memory map version number
@@ -110,6 +112,14 @@ void setup() {
     Particle.process();
   }
 
+  getSignalStrength();
+  Particle.publish("Status",resultStr,PRIVATE);
+
+
+  waitUntil(meterParticlePublish);
+  Particle.publish("Status", "Beginning Test Run",PRIVATE);
+
+
   rtc.setup();                                                     // Start the RTC code
   fram.begin();                                                    // Initializes Wire but does not return a boolean on successful initialization
   fram.get(FRAM::currentTestAddr,currentState);
@@ -117,7 +127,7 @@ void setup() {
   attachInterrupt(wakeUpPin, watchdogISR, RISING);                 // Need to pet the watchdog when needed
 
   state = I2C_SCAN;                                                // Start the tests
-  Particle.publish("Test Start", "Beginning Test Run",PRIVATE);
+
 }
 
 
@@ -311,14 +321,12 @@ bool rtcAlarmTest() {                                                           
   rtc.setAlarm(10);
 
   delay(11000);
-  //waitFor(rtc.getInterrupt,15);
 
-
-  if (rtc.getInterrupt() && digitalRead(wakeUpPin)) {
+  if (rtc.getInterrupt() && digitalRead(wakeUpPin)) {                                 // We need both a HIGH on Wake and the RTC Interrupt to pass this test
     bool beforeClear = digitalRead(wakeUpPin);
     rtc.clearInterrupt();
     bool afterClear = digitalRead(wakeUpPin);
-    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Passed and Wake Pin went from %s to %s",beforeClear?"true":"false", afterClear?"true":"false");
+    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Passed and Wake Pin went from %s to %s",beforeClear?"HIGH":"LOW", afterClear?"HIGH":"LOW");
     return 1;
   }
   else {
@@ -410,4 +418,22 @@ bool meterParticlePublish(void) {                                       // Enfor
     return 1;
   }
   else return 0;
+}
+
+void getSignalStrength()
+{
+  const char* radioTech[10] = {"Unknown","None","WiFi","GSM","UMTS","CDMA","LTE","IEEE802154","LTE_CAT_M1","LTE_CAT_NB1"};
+
+  // New Signal Strength capability - https://community.particle.io/t/boron-lte-and-cellular-rssi-funny-values/45299/8
+  CellularSignal sig = Cellular.RSSI();
+
+  auto rat = sig.getAccessTechnology();
+ 
+  //float strengthVal = sig.getStrengthValue();
+  float strengthPercentage = sig.getStrength();
+
+  //float qualityVal = sig.getQualityValue();
+  float qualityPercentage = sig.getQuality();
+
+  snprintf(resultStr,sizeof(resultStr), "Connected: %s S:%2.0f%%, Q:%2.0f%% ", radioTech[rat], strengthPercentage, qualityPercentage);
 }
