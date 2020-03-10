@@ -66,6 +66,8 @@ const int DeepSleepPin = D6;                                     // Power Cycles
 byte currentState;                                               // Store the current state for the tests that might cause a reset
 volatile bool watchdogInterrupt = false;                         // variable used to see if the watchdogInterrupt had fired
 char resultStr[64];
+char SignalString[64];                              // Used to communicate Wireless RSSI and Description
+
 
 // setup() runs once, when the device is first turned on.
 void setup() {
@@ -78,6 +80,10 @@ void setup() {
   pinMode(DeepSleepPin ,OUTPUT);                                  // For a hard reset active HIGH
 
   Particle.variable("Release",releaseNumber);
+  Particle.variable("Signal", SignalString);
+
+  Particle.function("MeasureNow",measureNow);
+
 
   detachInterrupt(LOW_BAT_UC);
   // Delay for up to two system power manager loop invocations
@@ -232,7 +238,6 @@ bool i2cScan() {                                            // Scan the i2c bus 
       snprintf(resultStr,sizeof(resultStr),"Unknown error at address %02X", address);
       return 0;
 		}
-
 	}
 
 	if (nDevices == 0) {
@@ -415,5 +420,16 @@ void getSignalStrength()
   //float qualityVal = sig.getQualityValue();
   float qualityPercentage = sig.getQuality();
 
+  snprintf(SignalString,sizeof(SignalString), "%s S:%2.0f%%, Q:%2.0f%% ", radioTech[rat], strengthPercentage, qualityPercentage);
   snprintf(resultStr,sizeof(resultStr), "Connected: %s S:%2.0f%%, Q:%2.0f%% ", radioTech[rat], strengthPercentage, qualityPercentage);
+}
+
+int measureNow(String command) {                                           // Function to force sending data in current hour
+
+  if (command == "1")
+  {
+    getSignalStrength();
+    return 1;
+  }
+  else return 0;
 }

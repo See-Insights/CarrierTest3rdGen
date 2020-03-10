@@ -26,6 +26,7 @@
 * v0.40 - Moved to the new library for FRAM
 * v0.50 - Changed pin definitions for the new v1.2 Boron Carrier
 * v0.60 - Added i2c scan and improved the RTC alarm testing
+* v0.65 - Added signal strength messaging at connection.  This is Boron Specific / need to fix this for Xenon / Argon
 */
 
 void setup();
@@ -42,7 +43,8 @@ void BlinkForever();
 int hardResetNow(String command);
 bool meterParticlePublish(void);
 void getSignalStrength();
-#line 25 "/Users/chipmc/Documents/Maker/Particle/Projects/CarrierTest3rdGen/src/CarrierTest3rdGen.ino"
+int measureNow(String command);
+#line 26 "/Users/chipmc/Documents/Maker/Particle/Projects/CarrierTest3rdGen/src/CarrierTest3rdGen.ino"
 namespace FRAM {                                    // Moved to namespace instead of #define to limit scope
   enum Addresses {
     versionAddr           = 0x00,                   // Where we store the memory map version number
@@ -86,6 +88,8 @@ const int DeepSleepPin = D6;                                     // Power Cycles
 byte currentState;                                               // Store the current state for the tests that might cause a reset
 volatile bool watchdogInterrupt = false;                         // variable used to see if the watchdogInterrupt had fired
 char resultStr[64];
+char SignalString[64];                              // Used to communicate Wireless RSSI and Description
+
 
 // setup() runs once, when the device is first turned on.
 void setup() {
@@ -98,6 +102,10 @@ void setup() {
   pinMode(DeepSleepPin ,OUTPUT);                                  // For a hard reset active HIGH
 
   Particle.variable("Release",releaseNumber);
+  Particle.variable("Signal", SignalString);
+
+  Particle.function("MeasureNow",measureNow);
+
 
   detachInterrupt(LOW_BAT_UC);
   // Delay for up to two system power manager loop invocations
@@ -435,5 +443,16 @@ void getSignalStrength()
   //float qualityVal = sig.getQualityValue();
   float qualityPercentage = sig.getQuality();
 
+  snprintf(SignalString,sizeof(SignalString), "%s S:%2.0f%%, Q:%2.0f%% ", radioTech[rat], strengthPercentage, qualityPercentage);
   snprintf(resultStr,sizeof(resultStr), "Connected: %s S:%2.0f%%, Q:%2.0f%% ", radioTech[rat], strengthPercentage, qualityPercentage);
+}
+
+int measureNow(String command) {                                           // Function to force sending data in current hour
+
+  if (command == "1")
+  {
+    getSignalStrength();
+    return 1;
+  }
+  else return 0;
 }
