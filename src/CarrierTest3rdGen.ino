@@ -21,6 +21,7 @@
 * v0.50 - Changed pin definitions for the new v1.2 Boron Carrier
 * v0.60 - Added i2c scan and improved the RTC alarm testing
 * v0.65 - Added signal strength messaging at connection.  This is Boron Specific / need to fix this for Xenon / Argon
+* v0.70 - Updated for new carrier board 1.3
 */
 
 namespace FRAM {                                    // Moved to namespace instead of #define to limit scope
@@ -35,7 +36,7 @@ namespace FRAM {                                    // Moved to namespace instea
   };
 };
 
-const char releaseNumber[6] = "0.4";                // Displays the release on the menu ****  this is not a production release ****
+const char releaseNumber[6] = "0.7";                // Displays the release on the menu ****  this is not a production release ****
 const int FRAMversionNumber = 1;
 
 // Included Libraries
@@ -112,7 +113,9 @@ void setup() {
 
   attachInterrupt(wakeUpPin, watchdogISR, RISING);                 // Need to pet the watchdog when needed
 
-  state = I2C_SCAN;                                                // Start the tests
+  byte rebootOrNot = EEPROM.read(0);
+  (rebootOrNot) ? state = CHARGING_TEST : state = I2C_SCAN;  // Start the tests
+  EEPROM.write(0,0);
 
 }
 
@@ -278,7 +281,7 @@ bool getTemperature() {
   voltage /= 4096.0;                    // Electron is different than the Arduino where there are only 1024 steps
   float temperatureC = (voltage - 0.5) * 100.0;  //converting from 10 mv per degree with 500 mV offset to degrees ((voltage - 500mV) times 100) - 5 degree calibration
   float temperatureF = (temperatureC * 9.0 / 5.0) + 32.0;  // now convert to Fahrenheit
-  if (temperatureF < 60.0 || temperatureF > 75.0) {             // Reasonable range for room temperature
+  if (temperatureF < 60.0 || temperatureF > 85.0) {             // Reasonable range for room temperature
     snprintf(resultStr, sizeof(resultStr),"Temp seems whack: %3.1f", temperatureF);
     return 0;
   }
@@ -301,23 +304,12 @@ bool rtcClockTest() {
 
 bool rtcAlarmTest() {                                                                 // RTC Alarm and Watchdog share access to Wake Pin via an OR gate
   waitUntil(meterParticlePublish);
-  Particle.publish("Information", "Setting an alarm for 10 seconds", PRIVATE);
-
+  Particle.publish("Information", "This alarm will reset the device", PRIVATE);
+  EEPROM.write(0,1);
+  delay(1000);
   rtc.setAlarm(10);
-
-  delay(11000);
-
-  if (rtc.getInterrupt() && digitalRead(wakeUpPin)) {                                 // We need both a HIGH on Wake and the RTC Interrupt to pass this test
-    bool beforeClear = digitalRead(wakeUpPin);
-    rtc.clearInterrupt();
-    bool afterClear = digitalRead(wakeUpPin);
-    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Passed and Wake Pin went from %s to %s",beforeClear?"HIGH":"LOW", afterClear?"HIGH":"LOW");
-    return 1;
-  }
-  else {
-    snprintf(resultStr, sizeof(resultStr),"RTC Alarm Test Failed");
-    return 0;
-  }
+  Particle.publish("Result","If you see this - RTC Alarm test failed",PRIVATE);
+  return 1;
 }
 
 bool batteryChargeTest() {
